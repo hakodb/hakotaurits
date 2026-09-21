@@ -7,7 +7,7 @@ API over Tauri IPC (`invoke`), binary MessagePack payloads, and
 
 ## Compatibility
 
-| @firelite/tauri | firelite-tauri (Rust) | firelite core |
+| @hakodb/tauri | firelite-tauri (Rust) | hakodb core |
 |---|---|---|
 | 0.1.1 | 0.1.1 | `cloud_sync` branch / `v0.8.20`+ release asset |
 

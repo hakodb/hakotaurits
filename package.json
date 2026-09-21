@@ -1,5 +1,5 @@
 {
-  "name": "@firelite/tauri",
+  "name": "@hakodb/tauri",
   "version": "0.1.1",
   "description": "FireLite TypeScript client for Tauri apps (pairs with the firelite-tauri Rust gateway crate)",
   "type": "module",
