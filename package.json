@@ -1,6 +1,6 @@
 {
   "name": "@hakodb/tauri",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "HakoDB TypeScript client for Tauri apps (pairs with the hako-tauri Rust gateway crate)",
   "license": "MIT",
   "type": "module",
