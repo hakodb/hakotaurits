@@ -1,15 +1,15 @@
-// ponytail: Firestore-shaped FireLite shim (539 lines) is YAGNI with one impl; inline db.exec when second backend appears
+// ponytail: Firestore-shaped HakoDB shim (539 lines) is YAGNI with one impl; inline db.exec when second backend appears
 import { invoke } from '@tauri-apps/api/core';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import { decode } from "@msgpack/msgpack";
 
 // --- Types & Interfaces ---
-export type FireLitePrimitive = 
+export type HakoPrimitive = 
   | string | number | boolean | null | Uint8Array | Date
-  | { [key: string]: FireLitePrimitive } 
-  | FireLitePrimitive[];
+  | { [key: string]: HakoPrimitive } 
+  | HakoPrimitive[];
 
-export type FireLiteRecord = Record<string, any>;
+export type HakoRecord = Record<string, any>;
 
 export type FilterOperator = 
   | 'eq' | 'ne' | 'gt' | 'gte' | 'lt' | 'lte' 
@@ -87,14 +87,14 @@ function normalizeValue(v: any): any {
 async function exec(op: any): Promise<any> {
     // Note: The 'op' field inside the payload is the variant tag
     // The other fields must match the Rust struct fields (snake_case)
-    const bytes = await invoke<number[]>('firelite_exec', { op });
+    const bytes = await invoke<number[]>('hako_exec', { op });
     const res = decode(new Uint8Array(bytes)) as any;
     if (res?.error) throw new Error(res.error);
     return res;
 }
 
 // --- Core Classes ---
-export class FireLite {}
+export class Hako {}
 
 export class DocumentReference {
     constructor(public readonly collectionPath: string, public readonly id: string) {}
@@ -114,12 +114,12 @@ export class CollectionGroupReference {
 export class DocumentSnapshot {
     public readonly id: string; 
     public readonly _time: number;
-    private _cachedData?: FireLiteRecord;
+    private _cachedData?: HakoRecord;
 
     constructor(
         id: string, 
         private readonly _exists: boolean, 
-        private readonly _data?: FireLiteRecord,
+        private readonly _data?: HakoRecord,
         private readonly _ref?: DocumentReference
     ) {
         // Use the ID from data if the provided ID is null (common in queries)
@@ -130,7 +130,7 @@ export class DocumentSnapshot {
     get ref() { return this._ref; }
     exists() { return this._exists; }
 
-    data(): FireLiteRecord | undefined { 
+    data(): HakoRecord | undefined { 
         if (!this._data) return undefined;
         
         if (!this._cachedData) {
@@ -169,7 +169,7 @@ export class Query {
 }
 
 // --- API Implementation ---
-export const getFirestore = () => new FireLite();
+export const getFirestore = () => new Hako();
 
 export const collection = (_db: any, path: string) => new CollectionReference(path);
 
@@ -187,7 +187,7 @@ export const doc = (_db: any, colOrPath: string | CollectionReference, id?: stri
 };
 
 // --- Write Operations ---
-export const addDoc = async (colRef: CollectionReference, data: FireLiteRecord) => {
+export const addDoc = async (colRef: CollectionReference, data: HakoRecord) => {
     // Send an empty string as doc_id to trigger Rust-side generation
     const res = await exec({ 
         op: 'set', 
@@ -199,18 +199,18 @@ export const addDoc = async (colRef: CollectionReference, data: FireLiteRecord) 
     return new DocumentReference(colRef.path, res.id);
 };
 
-export const setDoc = async (ref: DocumentReference, data: FireLiteRecord, options?: SetOptions) => {
+export const setDoc = async (ref: DocumentReference, data: HakoRecord, options?: SetOptions) => {
     const op = options?.merge ? 'patch' : 'set';
     await exec({ op, collection: ref.collectionPath, doc_id: ref.id, data: normalizeValue(data) });
 };
 
-export const updateDoc = async (ref: DocumentReference, data: Partial<FireLiteRecord>) => {
+export const updateDoc = async (ref: DocumentReference, data: Partial<HakoRecord>) => {
     await exec({ op: 'patch', collection: ref.collectionPath, doc_id: ref.id, data: normalizeValue(data) });
 };
 
 export const updateDocs = async (
     q: Query | CollectionReference | CollectionGroupReference, 
-    data: Partial<FireLiteRecord>
+    data: Partial<HakoRecord>
 ) => {
     const params = buildQueryParams(q);
     const res = await exec({ 
@@ -358,7 +358,7 @@ export function onSnapshot(
 ) {
     const isDoc = q instanceof DocumentReference;
     const listener_id = `fl_${Date.now()}_${Math.random().toString(36).slice(2)}`;
-    const event_name = `firelite://snapshot/${listener_id}`;
+    const event_name = `hako://snapshot/${listener_id}`;
     const params = buildQueryParams(q);
 
     // 1. Local state (Raw values)
@@ -456,12 +456,12 @@ export function onSnapshot(
 }
 
 // --- Transactions & Batches ---
-export const writeBatch = (_db: FireLite) => {
+export const writeBatch = (_db: Hako) => {
     const mutations: any[] = [];
     return {
-        set: (ref: DocumentReference, data: FireLiteRecord) => 
+        set: (ref: DocumentReference, data: HakoRecord) => 
             mutations.push({ mutation: 'set', collection: ref.collectionPath, doc_id: ref.id, data: normalizeValue(data) }),
-        update: (ref: DocumentReference, data: Partial<FireLiteRecord>) => 
+        update: (ref: DocumentReference, data: Partial<HakoRecord>) => 
             mutations.push({ mutation: 'patch', collection: ref.collectionPath, doc_id: ref.id, data: normalizeValue(data) }),
         delete: (ref: DocumentReference) => 
             mutations.push({ mutation: 'delete', collection: ref.collectionPath, doc_id: ref.id }),
@@ -470,7 +470,7 @@ export const writeBatch = (_db: FireLite) => {
 };
 
 export const runTransaction = async (
-  _db: FireLite,
+  _db: Hako,
   updateFunction: (transaction: any) => Promise<any>
 ) => {
   const mutations: any[] = [];
