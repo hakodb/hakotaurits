@@ -1,7 +1,7 @@
 {
   "name": "@hakodb/tauri",
   "version": "0.1.1",
-  "description": "FireLite TypeScript client for Tauri apps (pairs with the firelite-tauri Rust gateway crate)",
+  "description": "HakoDB TypeScript client for Tauri apps (pairs with the hako-tauri Rust gateway crate)",
   "type": "module",
   "main": "src/tauri.ts",
   "types": "src/tauri.ts",
@@ -9,7 +9,7 @@
     ".": "./src/tauri.ts"
   },
   "keywords": [
-    "firelite",
+    "hakodb",
     "firestore",
     "tauri"
   ],

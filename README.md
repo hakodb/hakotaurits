@@ -1,4 +1,4 @@
-# firelite-tauri-ts
+# hako-tauri-ts
 
 TypeScript client for Tauri apps backed by the
 [`hako-tauri`](../firelite-tauri) Rust gateway crate: Firestore-shaped
