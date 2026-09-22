@@ -1,13 +1,15 @@
 {
   "name": "@hakodb/tauri",
-  "version": "0.1.2",
+  "version": "0.2.0",
   "description": "HakoDB TypeScript client for Tauri apps (pairs with the hako-tauri Rust gateway crate)",
   "license": "MIT",
   "type": "module",
   "main": "src/tauri.ts",
   "types": "src/tauri.ts",
   "exports": {
-    ".": "./src/tauri.ts"
+    ".": "./src/tauri.ts",
+    "./net-sync": "./src/net_sync.ts",
+    "./cloud-sync": "./src/cloud_sync.ts"
   },
   "keywords": [
     "hakodb",
