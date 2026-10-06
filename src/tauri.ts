@@ -687,7 +687,21 @@ export const setDurability = (mode: 'always' | 'interval' | 'manual' | 'on_commi
     return exec({ op: 'set_durability', mode: modes[mode] });
 };
 
+/**
+ * Live group-commit window in ms (Interval mode), clamped server-side
+ * (1..=30000). Requires backend with the runtime setter (hakodb 0.10+,
+ * hakotauri 0.4+); older backends reject the op — detect via catch,
+ * not version sniffing.
+ */
+export const setGroupCommitInterval = (ms: number) => {
+    return exec({ op: 'set_group_commit_interval', ms });
+};
+
 export const setCompression = (enabled: boolean, level: number = 3) => {
+    // NOTE: engine-managed no-op by design — the backend accepts and
+    // ignores it (compression policy lives in the engine, not per call).
+    // Kept wired (not deprecated) so callsites keep compiling; do not
+    // expect any behavior change from toggling it.
     return exec({ op: 'set_compression', enabled, level });
 };
 
