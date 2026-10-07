@@ -556,6 +556,26 @@ export const listCollections = async () => {
     return res.collections.names;
 };
 
+/** Move docs between collections (archive/restore). Returns {moved, missing}. */
+export const relocateDocs = async (src: string, dst: string, ids: string[]) => {
+    const res = await exec({ op: 'relocate_docs', src, dst, ids });
+    return res.relocate_result as { moved: string[]; missing: string[] };
+};
+
+/** Explicit load of one (usually lazy archive) collection. */
+export const loadCollection = async (collection: string) =>
+    exec({ op: 'load_collection', collection });
+
+/** Explicit evict of one lazy collection (refuses non-lazy). */
+export const unloadCollection = async (collection: string) =>
+    exec({ op: 'unload_collection', collection });
+
+/** Archive-group collections on disk but not loaded. */
+export const unloadedCollections = async () => {
+    const res = await exec({ op: 'unloaded_collections' });
+    return res.collections.names as string[];
+};
+
 export const getStats = async () => {
     const res = await exec({ op: 'get_stats' });
     return res.stats.details;
