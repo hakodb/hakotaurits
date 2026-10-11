@@ -22,6 +22,15 @@ export interface SetOptions {
 
 export type AggregateKind = 'count' | 'sum' | 'avg';
 
+export type VectorMetric = 'cosine' | 'l2';
+
+export interface NearHit {
+    id: string;
+    /** Exact metric distance (lower = nearer; cosine in [0,2], l2 squared). */
+    score: number;
+    doc: DocumentSnapshot;
+}
+
 export interface AuditEntry {
     op: string;
     collection: string;
@@ -537,6 +546,49 @@ export const createCompositeIndex = async (
     collection,
     fields
   });
+};
+
+export const createVectorIndex = async (
+  colOrPath: string | CollectionReference,
+  field: string,
+  dim: number,
+  metric: VectorMetric = 'cosine'
+) => {
+  const collection =
+    typeof colOrPath === 'string' ? colOrPath : colOrPath.path;
+
+  return exec({
+    op: 'create_vector_index',
+    collection,
+    field,
+    dim,
+    metric
+  });
+};
+
+/** KNN search: nearest-first [{id, score, doc}]. Accepts number[] or Float32Array. */
+export const findNear = async (
+  colOrPath: string | CollectionReference,
+  field: string,
+  query: number[] | Float32Array,
+  k = 10
+): Promise<NearHit[]> => {
+  const collection =
+    typeof colOrPath === 'string' ? colOrPath : colOrPath.path;
+
+  const res = await exec({
+    op: 'find_near',
+    collection,
+    field,
+    // invoke args are JSON: Float32Array would not survive, flatten first.
+    query: Array.from(query),
+    k
+  });
+  return (res.near_result.hits as any[]).map((h) => ({
+    id: h.id as string,
+    score: h.score as number,
+    doc: new DocumentSnapshot(h.id as string, true, h.doc)
+  }));
 };
 
 export const listIndexes = async (collection?: string) => {
