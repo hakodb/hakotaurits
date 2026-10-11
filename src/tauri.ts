@@ -602,6 +602,21 @@ export const listIndexes = async (collection?: string) => {
 export const snapshotIndices = async () =>
   exec({ op: 'snapshot_indices' });
 
+/** Flush WAL + segments to disk (close path, deterministic tests). */
+export const flushDatabase = async () =>
+  exec({ op: 'flush' });
+
+/** Doc ids in a collection (key scans for seeding, archive passes, stats). */
+export const listStorageKeys = async (
+  colOrPath: string | CollectionReference
+): Promise<string[]> => {
+  const collection =
+    typeof colOrPath === 'string' ? colOrPath : colOrPath.path;
+
+  const res = await exec({ op: 'list_storage_keys', collection });
+  return res.storage_keys.ids as string[];
+};
+
 // --- Admin ---
 export const listCollections = async () => {
     const res = await exec({ op: 'list_collections' });
