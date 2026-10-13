@@ -24,10 +24,20 @@ export type AggregateKind = 'count' | 'sum' | 'avg';
 
 export type VectorMetric = 'cosine' | 'l2';
 
+export type TraverseDirection = 'outgoing' | 'incoming' | 'both';
+
 export interface NearHit {
     id: string;
     /** Exact metric distance (lower = nearer; cosine in [0,2], l2 squared). */
     score: number;
+    doc: DocumentSnapshot;
+}
+
+export interface PathHit {
+    collection: string;
+    id: string;
+    /** BFS hops from the anchor. */
+    depth: number;
     doc: DocumentSnapshot;
 }
 
@@ -587,6 +597,44 @@ export const findNear = async (
   return (res.near_result.hits as any[]).map((h) => ({
     id: h.id as string,
     score: h.score as number,
+    doc: new DocumentSnapshot(h.id as string, true, h.doc)
+  }));
+};
+
+export const createTraverseIndex = async (
+  colOrPath: string | CollectionReference
+) => {
+  const collection =
+    typeof colOrPath === 'string' ? colOrPath : colOrPath.path;
+
+  return exec({ op: 'create_traverse_index', collection });
+};
+
+/** Graph BFS from a doc: [{collection, id, depth, doc}] in walk order. */
+export const findPaths = async (
+  colOrPath: string | CollectionReference,
+  docId: string,
+  direction: TraverseDirection = 'outgoing',
+  edge: string | null = null,
+  maxDepth = 10,
+  k = 100
+): Promise<PathHit[]> => {
+  const collection =
+    typeof colOrPath === 'string' ? colOrPath : colOrPath.path;
+
+  const res = await exec({
+    op: 'find_paths',
+    collection,
+    doc_id: docId,
+    direction,
+    ...(edge === null ? {} : { edge }),
+    max_depth: maxDepth,
+    k
+  });
+  return (res.path_result.hits as any[]).map((h) => ({
+    collection: h.collection as string,
+    id: h.id as string,
+    depth: h.depth as number,
     doc: new DocumentSnapshot(h.id as string, true, h.doc)
   }));
 };
