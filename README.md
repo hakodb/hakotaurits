@@ -16,6 +16,7 @@ API over Tauri IPC (`invoke`), binary MessagePack payloads, and
 | 0.3.2 | 0.4.4 | `hakodb 0.13+` (`createVectorIndex` + `findNear` vector ops) |
 | 0.3.3 | 0.4.5 | `hakodb 0.13+` (`flushDatabase` + `listStorageKeys` consumer ops) |
 | 0.3.4 | 0.4.8 | `hakodb 0.14+` (`createTraverseIndex` + `findPaths` graph BFS) |
+| 0.3.5 | 0.4.9 | `hakodb 0.15+` (Phase B: `createEdgeIndex` + weighted `findPaths`) |
 
 The op enum in `src/tauri.ts` must match `HakoOp` in the
 `hakotauri` crate — bump both together.
