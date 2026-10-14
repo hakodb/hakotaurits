@@ -38,6 +38,8 @@ export interface PathHit {
     id: string;
     /** BFS hops from the anchor. */
     depth: number;
+    /** Accumulated cost (BFS: hops; Dijkstra: weight sum). */
+    cost?: number;
     doc: DocumentSnapshot;
 }
 
@@ -617,7 +619,9 @@ export const findPaths = async (
   direction: TraverseDirection = 'outgoing',
   edge: string | null = null,
   maxDepth = 10,
-  k = 100
+  k = 100,
+  via: string | null = null,
+  weight: string | null = null
 ): Promise<PathHit[]> => {
   const collection =
     typeof colOrPath === 'string' ? colOrPath : colOrPath.path;
@@ -629,14 +633,26 @@ export const findPaths = async (
     direction,
     ...(edge === null ? {} : { edge }),
     max_depth: maxDepth,
-    k
+    k,
+    ...(via === null ? {} : { via }),
+    ...(weight === null ? {} : { weight })
   });
   return (res.path_result.hits as any[]).map((h) => ({
     collection: h.collection as string,
     id: h.id as string,
     depth: h.depth as number,
+    cost: h.cost as number,
     doc: new DocumentSnapshot(h.id as string, true, h.doc)
   }));
+};
+
+export const createEdgeIndex = async (
+  colOrPath: string | CollectionReference
+) => {
+  const collection =
+    typeof colOrPath === 'string' ? colOrPath : colOrPath.path;
+
+  return exec({ op: 'create_edge_index', collection });
 };
 
 export const listIndexes = async (collection?: string) => {
