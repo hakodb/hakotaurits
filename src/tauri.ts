@@ -712,6 +712,16 @@ export const getStats = async () => {
     return res.stats.details;
 };
 
+/** Cheap existence probe; never materializes the collection. */
+export const docExists = async (collection: string, docId: string): Promise<boolean> => {
+    const res = await exec({ op: 'exists', collection, doc_id: docId });
+    return !!res.exists?.exists;
+};
+
+/** Compact one resident collection; absent/unloaded collections are a no-op. */
+export const compactCollection = async (collection: string) =>
+    exec({ op: 'compact_collection', collection });
+
 
 function buildQueryParams(q: Query | CollectionReference | CollectionGroupReference | DocumentReference) {
     // 1. Handle single DocumentReference (e.g., doc(db, 'users', '123'))
@@ -831,6 +841,36 @@ export const getAverageFromServer = async (
     ...params
   });
   return { data: () => ({ value: res.aggregate_result.value }) };
+};
+
+/** `null` when no matching document has a numeric `field`. */
+export const getMinFromServer = async (
+  q: Query | CollectionReference | CollectionGroupReference,
+  field: string
+) => {
+  const params = buildQueryParams(q);
+  const res = await exec({
+    op: 'aggregate',
+    kind: 'min',
+    field,
+    ...params
+  });
+  return { data: () => ({ value: res.aggregate_result.value ?? null }) };
+};
+
+/** `null` when no matching document has a numeric `field`. */
+export const getMaxFromServer = async (
+  q: Query | CollectionReference | CollectionGroupReference,
+  field: string
+) => {
+  const params = buildQueryParams(q);
+  const res = await exec({
+    op: 'aggregate',
+    kind: 'max',
+    field,
+    ...params
+  });
+  return { data: () => ({ value: res.aggregate_result.value ?? null }) };
 };
 
 export const setDurability = (mode: 'always' | 'interval' | 'manual' | 'on_commit') => {
