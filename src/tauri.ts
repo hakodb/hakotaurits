@@ -248,8 +248,28 @@ export const updateDocs = async (
     return res.bulk_action_result.count;
 };
 
-export const deleteDoc = async (ref: DocumentReference, options?: { localOnly?: boolean }) => {
-    await exec({ op: 'delete', collection: ref.collectionPath, doc_id: ref.id, local_only: options?.localOnly ?? false });
+export const deleteDoc = async (ref: DocumentReference, options?: { localOnly?: boolean; force?: boolean }) => {
+    await exec({ op: 'delete', collection: ref.collectionPath, doc_id: ref.id, local_only: options?.localOnly ?? false, force: options?.force ?? false });
+};
+
+/** Undo a soft delete: the doc is live again (fresh version), while the
+ * tombstone history stays for peers to reconcile. */
+export const restoreDoc = async (ref: DocumentReference) => {
+    await exec({ op: 'restore', collection: ref.collectionPath, doc_id: ref.id });
+};
+
+/** Soft-deleted docs still inside their retention window (restorable),
+ * across all collections or one. Raw retention records. */
+export const restoreAvailable = async (collection?: string): Promise<any> => {
+    const res = await exec({ op: 'restore_available', ...(collection ? { collection } : {}) });
+    return res.records.list;
+};
+
+/** Soft-deleted docs due for the sweeper purge, across all collections or
+ * one. Raw retention records — the restore half of this list is finite. */
+export const deleteQueue = async (collection?: string): Promise<any> => {
+    const res = await exec({ op: 'delete_queue', ...(collection ? { collection } : {}) });
+    return res.records.list;
 };
 
 /** Vacuum a collection: purge tombstones locally (never replicates); the
@@ -490,8 +510,14 @@ export const writeBatch = (_db: Hako) => {
             mutations.push({ mutation: 'set', collection: ref.collectionPath, doc_id: ref.id, data: normalizeValue(data) }),
         update: (ref: DocumentReference, data: Partial<HakoRecord>) => 
             mutations.push({ mutation: 'patch', collection: ref.collectionPath, doc_id: ref.id, data: normalizeValue(data) }),
-        delete: (ref: DocumentReference) => 
-            mutations.push({ mutation: 'delete', collection: ref.collectionPath, doc_id: ref.id }),
+        delete: (ref: DocumentReference, options?: { localOnly?: boolean; force?: boolean }) =>
+            mutations.push({
+                mutation: 'delete',
+                collection: ref.collectionPath,
+                doc_id: ref.id,
+                local_only: options?.localOnly ?? false,
+                force: options?.force ?? false
+            }),
         commit: async () => exec({ op: 'batch', mutations })
     };
 };
@@ -523,11 +549,13 @@ export const runTransaction = async (
         data: normalizeValue(data)
       }),
 
-    delete: (ref: DocumentReference) =>
+    delete: (ref: DocumentReference, options?: { localOnly?: boolean; force?: boolean }) =>
       mutations.push({
         mutation: 'delete',
         collection: ref.collectionPath,
-        doc_id: ref.id
+        doc_id: ref.id,
+        local_only: options?.localOnly ?? false,
+        force: options?.force ?? false
       })
   };
 
