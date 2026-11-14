@@ -20,9 +20,9 @@ export interface SetOptions {
     merge?: boolean;
 }
 
-export type AggregateKind = 'count' | 'sum' | 'avg';
+export type AggregateKind = 'count' | 'sum' | 'avg' | 'min' | 'max';
 
-export type VectorMetric = 'cosine' | 'l2';
+export type VectorMetric = 'cosine' | 'l2' | 'inner_product';
 
 export type TraverseDirection = 'outgoing' | 'incoming' | 'both';
 
@@ -41,6 +41,12 @@ export interface PathHit {
     /** Accumulated cost (BFS: hops; Dijkstra: weight sum). */
     cost?: number;
     doc: DocumentSnapshot;
+    /** Full discovery path start->hit (findPaths/findSimplePaths with
+     * includePath; absent otherwise). */
+    path?: { collection: string; id: string }[];
+    /** Edge doc per hop, aligned with `path` hops (includeVia; null for
+     * inline-reference hops). */
+    via?: (string | null)[];
 }
 
 export interface AuditEntry {
@@ -560,11 +566,19 @@ export const createCompositeIndex = async (
   });
 };
 
+export interface HnswParams {
+    /** Omitted/0: per-dim derived default. Persisted in the index def. */
+    m?: number;
+    efConstruction?: number;
+    efSearch?: number;
+}
+
 export const createVectorIndex = async (
   colOrPath: string | CollectionReference,
   field: string,
   dim: number,
-  metric: VectorMetric = 'cosine'
+  metric: VectorMetric = 'cosine',
+  params?: HnswParams
 ) => {
   const collection =
     typeof colOrPath === 'string' ? colOrPath : colOrPath.path;
@@ -574,16 +588,22 @@ export const createVectorIndex = async (
     collection,
     field,
     dim,
-    metric
+    metric,
+    ...(params?.m ? { m: params.m } : {}),
+    ...(params?.efConstruction ? { ef_construction: params.efConstruction } : {}),
+    ...(params?.efSearch ? { ef_search: params.efSearch } : {})
   });
 };
 
-/** KNN search: nearest-first [{id, score, doc}]. Accepts number[] or Float32Array. */
+/** KNN search: nearest-first [{id, score, doc}]. Accepts number[] or Float32Array.
+ * opts.maxDistance keeps only hits at or under the bound; opts.filters run
+ * hybrid search (ANN + predicates in one query). */
 export const findNear = async (
   colOrPath: string | CollectionReference,
   field: string,
   query: number[] | Float32Array,
-  k = 10
+  k = 10,
+  opts?: { maxDistance?: number; filters?: FilterInput[] }
 ): Promise<NearHit[]> => {
   const collection =
     typeof colOrPath === 'string' ? colOrPath : colOrPath.path;
@@ -594,7 +614,9 @@ export const findNear = async (
     field,
     // invoke args are JSON: Float32Array would not survive, flatten first.
     query: Array.from(query),
-    k
+    k,
+    ...(opts?.maxDistance !== undefined ? { max_distance: opts.maxDistance } : {}),
+    ...(opts?.filters?.length ? { filters: opts.filters } : {})
   });
   return (res.near_result.hits as any[]).map((h) => ({
     id: h.id as string,
@@ -612,7 +634,9 @@ export const createTraverseIndex = async (
   return exec({ op: 'create_traverse_index', collection });
 };
 
-/** Graph BFS from a doc: [{collection, id, depth, doc}] in walk order. */
+/** Graph BFS from a doc: [{collection, id, depth, doc}] in walk order.
+ * opts.nodeMatch/edgeType/edgeMatch prune the walk; includePath/includeVia
+ * fill the hit's path/via route projections. */
 export const findPaths = async (
   colOrPath: string | CollectionReference,
   docId: string,
@@ -621,7 +645,8 @@ export const findPaths = async (
   maxDepth = 10,
   k = 100,
   via: string | null = null,
-  weight: string | null = null
+  weight: string | null = null,
+  opts?: TraverseOptions
 ): Promise<PathHit[]> => {
   const collection =
     typeof colOrPath === 'string' ? colOrPath : colOrPath.path;
@@ -635,14 +660,17 @@ export const findPaths = async (
     max_depth: maxDepth,
     k,
     ...(via === null ? {} : { via }),
-    ...(weight === null ? {} : { weight })
+    ...(weight === null ? {} : { weight }),
+    ...traverseOpts(opts)
   });
   return (res.path_result.hits as any[]).map((h) => ({
     collection: h.collection as string,
     id: h.id as string,
     depth: h.depth as number,
     cost: h.cost as number,
-    doc: new DocumentSnapshot(h.id as string, true, h.doc)
+    doc: new DocumentSnapshot(h.id as string, true, h.doc),
+    ...(h.path ? { path: h.path } : {}),
+    ...(h.via ? { via: h.via } : {})
   }));
 };
 
@@ -900,3 +928,300 @@ export const getAuditLog = async (): Promise<AuditEntry[]> => {
     const res = await exec({ op: 'get_audit_log' });
     return res.audit_log.entries;
 };
+
+// --- 0.19.4 parity: transactions, pipeline, graph breadth, admin ops ---
+
+/** One (field, value) predicate, same wire shape as query filters. */
+export interface FilterInput {
+    field: string;
+    op: FilterOperator;
+    value: any;
+}
+
+/** Traversal routing/filtering: nodeMatch prunes at expansion,
+ * edgeType routes edge-collection hops (e.g. ("type", "follows")),
+ * edgeMatch filters edge properties (ANDs with edgeType). */
+export interface PropMatch { field: string; value: any; }
+
+export interface TraverseOptions {
+    nodeMatch?: PropMatch;
+    edgeType?: PropMatch;
+    edgeMatch?: PropMatch;
+    includePath?: boolean;
+    includeVia?: boolean;
+}
+
+function traverseOpts(opts?: TraverseOptions) {
+    return {
+        ...(opts?.nodeMatch ? { node_match: opts.nodeMatch } : {}),
+        ...(opts?.edgeType ? { edge_type: opts.edgeType } : {}),
+        ...(opts?.edgeMatch ? { edge_match: opts.edgeMatch } : {}),
+        ...(opts?.includePath ? { include_path: true } : {}),
+        ...(opts?.includeVia ? { include_via: true } : {})
+    };
+}
+
+export type DropIndexKind = 'simple' | 'fts' | 'vector' | 'traverse' | 'edge' | 'composite';
+
+export type GraphAnalysisKind = 'components' | 'cycle' | 'topo' | 'degrees';
+
+export type TxnStepKind = 'get' | 'set' | 'patch' | 'delete';
+
+/** One step inside a transaction, run in order under one snapshot.
+ * force (delete only): true = legacy hard delete, false = soft (default). */
+export interface TxnStep {
+    kind: TxnStepKind;
+    collection: string;
+    doc_id: string;
+    /** Set/Patch payload (ignored by Get/Delete). */
+    data?: any;
+    force?: boolean;
+}
+
+/** One pipeline stage. `match` replaces the row set (a full query shape);
+ * every other stage transforms it. */
+export type StageInput =
+    | { stage: 'match'; filters?: FilterInput[]; or_groups?: FilterInput[][]; order_by?: { field: string; ascending?: boolean }[]; limit?: number; offset?: number; projection?: string[]; start_at?: any[]; start_after?: any[]; end_at?: any[]; end_before?: any[]; doc_id_filter?: string }
+    | { stage: 'project'; fields: string[] }
+    | { stage: 'sort'; field: string; ascending?: boolean }
+    | { stage: 'limit'; n: number }
+    | { stage: 'offset'; n: number }
+    | { stage: 'unwind'; field: string }
+    | { stage: 'group'; key?: string; accums: { out: string; kind: AggregateKind; field?: string }[] };
+
+export interface DropResult {
+    docs_removed: number;
+    bytes_reclaimed: number;
+    collections_dropped: string[];
+}
+
+export interface QuiescenceStatus {
+    indexes_ready: boolean;
+    pending_index_ops: number;
+    index_backfills: number;
+    pending_blob_bytes: number;
+    queued_blob_items: number;
+    maintenance_running: boolean;
+}
+
+/**
+ * Serializable read-modify-write with bounded retry: the whole step list
+ * re-runs on a fresh snapshot when a read-set conflict is detected.
+ * Returns the docs read by `get` steps (aligned in step order; null =
+ * absent at snapshot). `maxAttempts` defaults to 3.
+ */
+export const execTransaction = async (
+    steps: TxnStep[],
+    maxAttempts = 3
+): Promise<(HakoRecord | null)[]> => {
+    const res = await exec({ op: 'transaction', steps, max_attempts: maxAttempts });
+    return res.transaction_result.docs as any[];
+};
+
+/** Multi-stage aggregation pipeline over one collection. Returns plain
+ * rows (match stage ordering differs from getDocs' DocumentSnapshot). */
+export const runPipeline = async (
+    colOrPath: string | CollectionReference,
+    stages: StageInput[]
+): Promise<HakoRecord[]> => {
+    const collection = typeof colOrPath === 'string' ? colOrPath : colOrPath.path;
+    const res = await exec({ op: 'pipeline', collection, stages });
+    return res.query_result.rows as HakoRecord[];
+};
+
+/** Drop one index definition: simple/fts/vector need `field`, composite
+ * needs `id` (from listIndexes), traverse/edge need the collection only. */
+export const dropIndex = async (
+    colOrPath: string | CollectionReference,
+    kind: DropIndexKind,
+    opts?: { field?: string; id?: number }
+) => {
+    const collection = typeof colOrPath === 'string' ? colOrPath : colOrPath.path;
+    return exec({
+        op: 'drop_index',
+        kind,
+        collection,
+        ...(opts?.field ? { field: opts.field } : {}),
+        ...(opts?.id !== undefined ? { id: opts.id } : {})
+    });
+};
+
+/** Batched KNN (#141-5): one readiness cycle for many query vectors.
+ * Results align 1:1 with `queries`, each nearest-first. */
+export const findNearBatch = async (
+    colOrPath: string | CollectionReference,
+    field: string,
+    queries: (number[] | Float32Array)[],
+    k = 10
+): Promise<NearHit[][]> => {
+    const collection = typeof colOrPath === 'string' ? colOrPath : colOrPath.path;
+    const res = await exec({
+        op: 'find_near_batch',
+        collection,
+        field,
+        queries: queries.map((q) => Array.from(q)),
+        k
+    });
+    return (res.near_batch_result.results as any[][]).map((hits) =>
+        hits.map((h) => ({
+            id: h.id as string,
+            score: h.score as number,
+            doc: new DocumentSnapshot(h.id as string, true, h.doc)
+        }))
+    );
+};
+
+/** Cycle-safe simple-path enumeration (no node revisits), same wire
+ * shape as findPaths. */
+export const findSimplePaths = async (
+    colOrPath: string | CollectionReference,
+    docId: string,
+    direction: TraverseDirection = 'outgoing',
+    edge: string | null = null,
+    maxDepth = 10,
+    k = 100,
+    via: string | null = null,
+    weight: string | null = null,
+    opts?: TraverseOptions
+): Promise<PathHit[]> => {
+    const collection = typeof colOrPath === 'string' ? colOrPath : colOrPath.path;
+    const res = await exec({
+        op: 'find_simple_paths',
+        collection,
+        doc_id: docId,
+        direction,
+        ...(edge === null ? {} : { edge }),
+        max_depth: maxDepth,
+        k,
+        ...(via === null ? {} : { via }),
+        ...(weight === null ? {} : { weight }),
+        ...traverseOpts(opts)
+    });
+    return (res.path_result.hits as any[]).map((h) => ({
+        collection: h.collection as string,
+        id: h.id as string,
+        depth: h.depth as number,
+        cost: h.cost as number,
+        doc: new DocumentSnapshot(h.id as string, true, h.doc),
+        ...(h.path ? { path: h.path } : {}),
+        ...(h.via ? { via: h.via } : {})
+    }));
+};
+
+/** Whole-graph algorithms over the collection's adjacency:
+ * components (labelled groups), cycle (one directed cycle or null),
+ * topo (topological order or null), degrees (out/in per node). */
+export const graphAnalysis = async (
+    colOrPath: string | CollectionReference,
+    kind: GraphAnalysisKind,
+    opts?: { direction?: TraverseDirection; edge?: string; via?: string; nodeMatch?: PropMatch }
+): Promise<any> => {
+    const collection = typeof colOrPath === 'string' ? colOrPath : colOrPath.path;
+    const res = await exec({
+        op: 'graph_analysis',
+        collection,
+        kind,
+        direction: opts?.direction ?? 'outgoing',
+        ...(opts?.edge ? { edge: opts.edge } : {}),
+        ...(opts?.via ? { via: opts.via } : {}),
+        ...(opts?.nodeMatch ? { node_match: opts.nodeMatch } : {})
+    });
+    return res.value_result.value;
+};
+
+/** Export one collection's graph as viz-ready JSON (nodes + edges). */
+export const exportGraph = async (
+    colOrPath: string | CollectionReference,
+    opts?: { direction?: TraverseDirection; edge?: string; via?: string }
+): Promise<any> => {
+    const collection = typeof colOrPath === 'string' ? colOrPath : colOrPath.path;
+    const res = await exec({
+        op: 'export_graph',
+        collection,
+        direction: opts?.direction ?? 'outgoing',
+        ...(opts?.edge ? { edge: opts.edge } : {}),
+        ...(opts?.via ? { via: opts.via } : {})
+    });
+    return res.value_result.value;
+};
+
+/** Point read with its storage version (optimistic concurrency:
+ * compare `version` before patching; mismatch = someone wrote first). */
+export const getVersioned = async (
+    colOrPath: string | CollectionReference,
+    docId: string
+): Promise<{ data: HakoRecord; version: number } | null> => {
+    const collection = typeof colOrPath === 'string' ? colOrPath : colOrPath.path;
+    const res = await exec({ op: 'get_versioned', collection, doc_id: docId });
+    const dv = res.document_version;
+    return dv?.data ? { data: dv.data, version: dv.version } : null;
+};
+
+/** Resolve a `{"__ref__": "col/id"}` reference field to its doc. */
+export const getByRef = async (
+    collectionPath: string,
+    docId: string
+): Promise<DocumentSnapshot | null> => {
+    const res = await exec({ op: 'get_by_ref', reference: { __ref__: `${collectionPath}/${docId}` } });
+    const data = res.document?.data;
+    return data ? new DocumentSnapshot(docId, true, data) : null;
+};
+
+/** Write one doc under a parent doc's subcollection namespace. Returns
+ * the storage key path used. */
+export const putSubdocument = async (
+    collectionPath: string,
+    docId: string,
+    subcollection: string,
+    subdocId: string,
+    data: HakoRecord
+): Promise<string> => {
+    const res = await exec({
+        op: 'put_subdocument',
+        collection: collectionPath,
+        doc_id: docId,
+        subcollection,
+        subdoc_id: subdocId,
+        data: normalizeValue(data)
+    });
+    return res.value_result.value as string;
+};
+
+/** Plan-only query explanation: scan type, chosen index, why filters are
+ * (not) index-satisfied. Nothing executes. */
+export const explainQuery = async (
+    q: Query | CollectionReference | CollectionGroupReference
+): Promise<any> => {
+    const res = await exec({ op: 'query', action: 'explain', ...buildQueryParams(q) });
+    return res.value_result.value;
+};
+
+/** Storage-prefix rename of a whole collection (fast, atomic). */
+export const renameCollection = async (from: string, to: string) =>
+    exec({ op: 'rename_collection', from, to });
+
+/** Hard-drop a collection: tombstones live docs, unlinks the shard dir. */
+export const dropCollection = async (collection: string): Promise<DropResult> => {
+    const res = await exec({ op: 'drop_collection', collection });
+    return res.drop_result;
+};
+
+/** Un-withhold from replication: docId scopes to one key, otherwise the
+ * whole collection's local-only marks clear. */
+export const replicate = async (collection: string, docId?: string) =>
+    exec({ op: 'replicate', collection, ...(docId ? { doc_id: docId } : {}) });
+
+/** What background work is outstanding (index recovery, backfills,
+ * pending blob bytes). Poll before cursor paging / replica handoff. */
+export const quiescenceStatus = async (): Promise<QuiescenceStatus> => {
+    const res = await exec({ op: 'quiescence' });
+    return res.value_result.value;
+};
+
+/** Pin/unpin a collection to this instance only (never replicates). */
+export const setCollectionLocal = async (collection: string, local: boolean) =>
+    exec({ op: 'set_collection_local', collection, local });
+
+/** Whole-engine read-only toggle (rejects writes, serves reads). */
+export const setReadOnly = async (enabled: boolean) =>
+    exec({ op: 'set_read_only', enabled });
