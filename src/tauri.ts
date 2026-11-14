@@ -279,6 +279,13 @@ export const vacuumCollection = async (collectionPath: string) => {
     return res.bulk_action_result.count;
 };
 
+/** Run one sweeper pass now: purge soft-deleted docs past their retention
+ * window across all collections. Returns the purged record count. */
+export const sweepNow = async () => {
+    const res = await exec({ op: 'sweep' });
+    return res.bulk_action_result.count;
+};
+
 export const deleteDocs = async (
     q: Query | CollectionReference | CollectionGroupReference,
     options?: { localOnly?: boolean }
@@ -777,6 +784,12 @@ export const docExists = async (collection: string, docId: string): Promise<bool
 /** Compact one resident collection; absent/unloaded collections are a no-op. */
 export const compactCollection = async (collection: string) =>
     exec({ op: 'compact_collection', collection });
+
+/** Compact the whole database (every resident shard). */
+export const compact = async () => exec({ op: 'compact' });
+
+/** Write a full backup of the local database to a device-local file path. */
+export const backup = async (path: string) => exec({ op: 'backup', path });
 
 
 function buildQueryParams(q: Query | CollectionReference | CollectionGroupReference | DocumentReference) {
