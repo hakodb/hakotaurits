@@ -19,6 +19,7 @@ API over Tauri IPC (`invoke`), binary MessagePack payloads, and
 | 0.3.5 | 0.4.9 | `hakodb 0.15+` (Phase B: `createEdgeIndex` + weighted `findPaths`) |
 | 0.3.6 | 0.4.11 | `hakodb 0.17.1` (tombstone version fix + engine JSON read paths ride along inside the gateway; no new ops) |
 | 0.3.7 | 0.5.0 | `hakodb 0.19.0` (`getMinFromServer` / `getMaxFromServer` with `null` for an empty numeric set; `docExists` + `compactCollection`) |
+| 0.3.8 | 0.6.3 | `hakodb 0.19.4+` (full parity: `execTransaction`, `runPipeline`, `dropIndex`, `findNearBatch` + hybrid/maxDistance `findNear`, `findSimplePaths`, `graphAnalysis`, `exportGraph`, `getVersioned`, `getByRef`, `putSubdocument`, `explainQuery`, `renameCollection`, `dropCollection`, `replicate`, `quiescenceStatus`, `setCollectionLocal`, `setReadOnly`; HNSW `m`/`ef` knobs + `inner_product` metric) |
 
 The op enum in `src/tauri.ts` must match `HakoOp` in the
 `hakotauri` crate — bump both together.
