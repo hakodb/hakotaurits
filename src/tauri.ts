@@ -606,6 +606,8 @@ export interface HnswParams {
     m?: number;
     efConstruction?: number;
     efSearch?: number;
+    /** Popcount stage-1 (#190); omitted = int8 stage-1. */
+    binaryStage1?: boolean;
 }
 
 export const createVectorIndex = async (
@@ -626,7 +628,8 @@ export const createVectorIndex = async (
     metric,
     ...(params?.m ? { m: params.m } : {}),
     ...(params?.efConstruction ? { ef_construction: params.efConstruction } : {}),
-    ...(params?.efSearch ? { ef_search: params.efSearch } : {})
+    ...(params?.efSearch ? { ef_search: params.efSearch } : {}),
+    ...(params?.binaryStage1 ? { binary_stage1: true } : {})
   });
 };
 
@@ -1184,6 +1187,79 @@ export const exportGraph = async (
         ...(opts?.via ? { via: opts.via } : {})
     });
     return res.value_result.value;
+};
+
+/** Personalized PageRank: teleport mass `1 - damping` on the seed set
+ * (`seeds` = ["col/id"] or null for classic PageRank). damping 0 = engine
+ * default 0.85; top 0 = all nodes. Rows [{node, score}] score desc. */
+export const graphPagerank = async (
+    colOrPath: string | CollectionReference,
+    seeds: string[] | null,
+    opts?: { direction?: TraverseDirection; edge?: string; via?: string; nodeMatch?: PropMatch; damping?: number; top?: number }
+): Promise<any> => {
+    const collection = typeof colOrPath === 'string' ? colOrPath : colOrPath.path;
+    const res = await exec({
+        op: 'graph_pagerank',
+        collection,
+        ...(seeds?.length ? { seeds } : {}),
+        direction: opts?.direction ?? 'outgoing',
+        ...(opts?.edge ? { edge: opts.edge } : {}),
+        ...(opts?.via ? { via: opts.via } : {}),
+        ...(opts?.nodeMatch ? { node_match: opts.nodeMatch } : {}),
+        ...(opts?.damping ? { damping: opts.damping } : {}),
+        ...(opts?.top ? { top: opts.top } : {})
+    });
+    return res.value_result.value;
+};
+
+/** Seed-scoped N-hop subgraph: export-graph node/edge shape scoped to one
+ * seed. maxDepth = hop cap (default 10). Missing seed = empty graph. */
+export const subgraph = async (
+    colOrPath: string | CollectionReference,
+    seedId: string,
+    opts?: { maxDepth?: number; direction?: TraverseDirection; edge?: string; via?: string; nodeMatch?: PropMatch }
+): Promise<any> => {
+    const collection = typeof colOrPath === 'string' ? colOrPath : colOrPath.path;
+    const res = await exec({
+        op: 'subgraph',
+        collection,
+        seed_id: seedId,
+        max_depth: opts?.maxDepth ?? 10,
+        direction: opts?.direction ?? 'outgoing',
+        ...(opts?.edge ? { edge: opts.edge } : {}),
+        ...(opts?.via ? { via: opts.via } : {}),
+        ...(opts?.nodeMatch ? { node_match: opts.nodeMatch } : {})
+    });
+    return res.value_result.value;
+};
+
+/** Hybrid retrieval: FTS (sparse) + KNN (dense) fused with RRF. Rows
+ * [{id, score (fused, desc), doc}]. rrfK 0 = engine default 60. */
+export const hybridSearch = async (
+    colOrPath: string | CollectionReference,
+    textField: string,
+    textQuery: string,
+    vecField: string,
+    query: number[] | Float32Array,
+    k = 10,
+    rrfK = 0
+): Promise<Array<{ id: string; score: number; doc: DocumentSnapshot }>> => {
+    const collection = typeof colOrPath === 'string' ? colOrPath : colOrPath.path;
+    const res = await exec({
+        op: 'hybrid_search',
+        collection,
+        text_field: textField,
+        text_query: textQuery,
+        vec_field: vecField,
+        query: Array.from(query),
+        k,
+        rrf_k: rrfK
+    });
+    return (res.hybrid_result.hits as any[]).map((h) => ({
+        id: h.id as string,
+        score: h.score as number,
+        doc: new DocumentSnapshot(h.id as string, true, h.doc)
+    }));
 };
 
 /** Point read with its storage version (optimistic concurrency:
