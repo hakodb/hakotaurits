@@ -610,6 +610,20 @@ export interface HnswParams {
     binaryStage1?: boolean;
 }
 
+/** #217 P2: idempotent boot-time index declaration. Re-declaring is a no-op. */
+export const ensureIndexes = async (schema: {
+    fts?: Array<[string, string]>;
+    vector?: Array<{ collection: string; field: string; dim: number; metric?: 'cosine' | 'l2' }>;
+    tracked?: string[];
+}): Promise<void> => {
+    await exec({
+        op: 'ensure_indexes',
+        fts: schema.fts ?? [],
+        vector: (schema.vector ?? []).map((v) => [v.collection, v.field, v.dim, v.metric ?? 'cosine']),
+        tracked: schema.tracked ?? []
+    });
+};
+
 export const createVectorIndex = async (
   colOrPath: string | CollectionReference,
   field: string,
@@ -1168,7 +1182,7 @@ export const graphAnalysis = async (
         direction: opts?.direction ?? 'outgoing',
         ...(opts?.edge ? { edge: opts.edge } : {}),
         ...(opts?.via ? { via: opts.via } : {}),
-        ...(opts?.nodeMatch ? { node_match: opts.nodeMatch } : {})
+        ...(opts?.nodeMatch ? { node_match: opts.nodeMatch } : {}),
     });
     return res.value_result.value;
 };
@@ -1217,7 +1231,7 @@ export const graphPagerank = async (
 export const subgraph = async (
     colOrPath: string | CollectionReference,
     seedId: string,
-    opts?: { maxDepth?: number; direction?: TraverseDirection; edge?: string; via?: string; nodeMatch?: PropMatch }
+    opts?: { maxDepth?: number; direction?: TraverseDirection; edge?: string; via?: string; nodeMatch?: PropMatch; fields?: string[] }
 ): Promise<any> => {
     const collection = typeof colOrPath === 'string' ? colOrPath : colOrPath.path;
     const res = await exec({
@@ -1242,7 +1256,8 @@ export const hybridSearch = async (
     vecField: string,
     query: number[] | Float32Array,
     k = 10,
-    rrfK = 0
+    rrfK = 0,
+    filters?: Array<{ field: string; op: string; value: any }>
 ): Promise<Array<{ id: string; score: number; doc: DocumentSnapshot }>> => {
     const collection = typeof colOrPath === 'string' ? colOrPath : colOrPath.path;
     const res = await exec({
@@ -1253,7 +1268,8 @@ export const hybridSearch = async (
         vec_field: vecField,
         query: Array.from(query),
         k,
-        rrf_k: rrfK
+        rrf_k: rrfK,
+        filters: (filters ?? []).map((f) => ({ field: f.field, op: symToOp(f.op), value: f.value }))
     });
     return (res.hybrid_result.hits as any[]).map((h) => ({
         id: h.id as string,
